@@ -57,11 +57,85 @@ def get_message_context(msg_row, datasets):
 
     return context
 
-def build_prompt(msg_row, context):
+def _text_sim(a, b):
+    ta = set(str(a).lower().split()) if pd.notna(a) else set()
+    tb = set(str(b).lower().split()) if pd.notna(b) else set()
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / len(ta | tb)
+
+def get_evidence(msg_row, datasets, top_k=3):
+    """
+    Retrieves the most relevant historical messages (and the user's reaction to
+    them) for an incoming message, using O(1) index lookups where possible.
+    """
+    hist = datasets.get('message_history')
+    if hist is None or hist.empty:
+        return []
+    user_id = msg_row.get('user_id')
+    if pd.isna(user_id):
+        return []
+
+    incoming_ts = str(msg_row.get('created_at'))
+    same_user = hist[hist['user_id'] == user_id]
+    candidates = same_user[same_user['created_at'] < incoming_ts]
+
+    sender = msg_row.get('sender_user_id')
+    group_id = msg_row.get('group_id')
+    biz_id = msg_row.get('business_id')
+    msg_text = msg_row.get('message_text')
+
+    scored = []
+    for mid, r in candidates.iterrows():
+        score = 0.0
+        if pd.notna(sender) and r.get('sender_user_id') == sender:
+            score += 2.0
+        if pd.notna(group_id) and r.get('group_id') == group_id:
+            score += 1.5
+        if pd.notna(biz_id) and r.get('business_id') == biz_id:
+            score += 1.5
+        score += _text_sim(msg_text, r.get('message_text')) * 1.5
+        try:
+            days = (pd.to_datetime(incoming_ts) - pd.to_datetime(r.get('created_at'))).days
+            score += max(0.0, 1.0 - days / 30.0)
+        except Exception:
+            pass
+        scored.append((score, mid, r))
+
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    events = datasets.get('message_events')
+
+    evidence = []
+    for score, mid, r in scored[:top_k]:
+        item = {
+            'message_id': mid,
+            'created_at': r.get('created_at'),
+            'message_text': str(r.get('message_text'))[:200] if pd.notna(r.get('message_text')) else '',
+        }
+        if pd.notna(r.get('sender_user_id')):
+            item['sender_user_id'] = r.get('sender_user_id')
+        if pd.notna(r.get('group_id')):
+            item['group_id'] = r.get('group_id')
+        if pd.notna(r.get('business_id')):
+            item['business_id'] = r.get('business_id')
+        if events is not None and (user_id, mid) in events.index:
+            ev = events.loc[(user_id, mid)].to_dict()
+            item['user_reaction'] = {k: ev[k] for k in ev if pd.notna(ev[k])}
+        evidence.append(item)
+    return evidence
+
+def build_prompt(msg_row, context, evidence=None):
     """
     Constructs the prompt for the LLM.
     """
     msg_dict = msg_row.to_dict()
+
+    evidence_section = ""
+    if evidence:
+        evidence_section = f"""
+### HISTORICAL EVIDENCE (past messages from this user's history, with the user's reaction to each)
+{json.dumps(evidence, indent=2, default=str)}
+"""
     
     prompt = f"""You are an expert AI system designed to route incoming WhatsApp messages. Your goal is to protect the user's attention by deciding if a message requires immediate interruption (`notify`), can be batched for later (`digest`), or should be suppressed entirely (`mute`).
 
@@ -87,7 +161,7 @@ You will receive an INCOMING MESSAGE and its associated AVAILABLE CONTEXT (which
 
 ### OUTPUT REQUIREMENTS
 You must output valid JSON matching the provided schema. Carefully determine the best `message_type` from the allowed list based on the text and/or media content. 
-For `evidence_message_ids`, list any historical message IDs that influenced your decision, separated by semicolons. If none apply, output "none".
+For `evidence_message_ids`, list the HISTORICAL EVIDENCE message IDs that influenced your decision, separated by semicolons. Use ONLY IDs from the HISTORICAL EVIDENCE section; never invent or guess message IDs. If no historical message is relevant, output "none".
 For `reason`, provide a concise, 1-2 sentence human-readable explanation of why you made this routing decision based on the context.
 
 ---
@@ -97,12 +171,13 @@ INCOMING MESSAGE:
 
 AVAILABLE CONTEXT:
 {json.dumps(context, indent=2, default=str)}
-"""
+{evidence_section}"""
     return prompt
 
 def route_message(msg_row, datasets):
     context = get_message_context(msg_row, datasets)
-    prompt = build_prompt(msg_row, context)
+    evidence = get_evidence(msg_row, datasets)
+    prompt = build_prompt(msg_row, context, evidence)
     
     contents = [prompt]
     
@@ -135,7 +210,7 @@ def route_message(msg_row, datasets):
             )
     
     response = client.models.generate_content(
-        model='gemini-3.5-flash',
+        model='gemini-3.5-flash-lite',
         contents=contents,
         config=types.GenerateContentConfig(
             response_mime_type="application/json",

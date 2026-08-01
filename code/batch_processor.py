@@ -1,4 +1,5 @@
 import pandas as pd
+import sys
 import time
 from pathlib import Path
 from router import route_message
@@ -57,7 +58,16 @@ def write_output(results, template_order, just_written):
     out.to_csv(OUTPUT_PATH, index=False)
     print(f"  [saved] output.csv updated (last written: {just_written})")
 
-def process_all_messages():
+def reset_output(template_order):
+    rows = [{'message_id': mid} for mid in template_order]
+    out = pd.DataFrame(rows)
+    for c in COLS[1:]:
+        out[c] = ''
+    out = out[COLS]
+    out.to_csv(OUTPUT_PATH, index=False)
+    print(f"[reset] output.csv cleared ({len(rows)} rows)")
+
+def process_all_messages(reset=False):
     print("Loading datasets...")
     datasets = load_data('../dataset')
 
@@ -67,7 +77,11 @@ def process_all_messages():
         return
 
     template_order = get_template_order(OUTPUT_PATH, messages_df)
-    completed = load_completed(OUTPUT_PATH)
+    if reset:
+        reset_output(template_order)
+        completed = {}
+    else:
+        completed = load_completed(OUTPUT_PATH)
     todo = [r for _, r in messages_df.iterrows() if str(r['message_id']) not in completed]
     print(f"Total: {len(messages_df)} | Already done: {len(completed)} | To process: {len(todo)}")
 
@@ -132,4 +146,4 @@ def process_all_messages():
     print(f"Final predictions saved to {OUTPUT_PATH}")
 
 if __name__ == "__main__":
-    process_all_messages()
+    process_all_messages(reset='--reset' in sys.argv)

@@ -35,6 +35,10 @@ def load_data(base_path='../dataset'):
                 df.set_index('image_id', inplace=True)
             elif key == 'voice_notes' and 'voice_note_id' in df.columns:
                 df.set_index('voice_note_id', inplace=True)
+            elif key == 'message_history' and 'message_id' in df.columns:
+                df.set_index('message_id', inplace=True)
+            elif key == 'message_events' and 'user_id' in df.columns and 'message_id' in df.columns:
+                df.set_index(['user_id', 'message_id'], inplace=True)
                 
             data[key] = df
         else:
