@@ -21,7 +21,7 @@ class RoutingDecision(BaseModel):
 
 def get_message_context(msg_row, datasets):
     """
-    Extracts relevant context for a given message row.
+    Extracts relevant context for a given message row using O(1) index lookups.
     """
     context = {}
     user_id = msg_row.get('user_id')
@@ -29,41 +29,31 @@ def get_message_context(msg_row, datasets):
     # 1. User preferences
     if pd.notna(user_id):
         users_df = datasets.get('users')
-        if users_df is not None:
-            user_info = users_df[users_df['user_id'] == user_id]
-            if not user_info.empty:
-                context['user_settings'] = user_info.iloc[0].to_dict()
+        if users_df is not None and user_id in users_df.index:
+            context['user_settings'] = users_df.loc[user_id].to_dict()
                 
     # 2. Group Info
     group_id = msg_row.get('group_id')
     if pd.notna(group_id):
         groups_df = datasets.get('groups')
-        if groups_df is not None:
-            group_info = groups_df[groups_df['group_id'] == group_id]
-            if not group_info.empty:
-                context['group_info'] = group_info.iloc[0].to_dict()
+        if groups_df is not None and group_id in groups_df.index:
+            context['group_info'] = groups_df.loc[group_id].to_dict()
                 
         # User's group membership
         group_members_df = datasets.get('group_members')
-        if group_members_df is not None and pd.notna(user_id):
-            membership = group_members_df[(group_members_df['group_id'] == group_id) & (group_members_df['user_id'] == user_id)]
-            if not membership.empty:
-                context['user_group_membership'] = membership.iloc[0].to_dict()
+        if group_members_df is not None and (group_id, user_id) in group_members_df.index:
+            context['user_group_membership'] = group_members_df.loc[(group_id, user_id)].to_dict()
 
     # 3. Business Info
     business_id = msg_row.get('business_id')
     if pd.notna(business_id):
         biz_df = datasets.get('business_accounts')
-        if biz_df is not None:
-            biz_info = biz_df[biz_df['business_id'] == business_id]
-            if not biz_info.empty:
-                context['business_account_info'] = biz_info.iloc[0].to_dict()
+        if biz_df is not None and business_id in biz_df.index:
+            context['business_account_info'] = biz_df.loc[business_id].to_dict()
                 
         biz_history_df = datasets.get('user_business_history')
-        if biz_history_df is not None and pd.notna(user_id):
-            history = biz_history_df[(biz_history_df['business_id'] == business_id) & (biz_history_df['user_id'] == user_id)]
-            if not history.empty:
-                context['user_business_history'] = history.iloc[0].to_dict()
+        if biz_history_df is not None and (business_id, user_id) in biz_history_df.index:
+            context['user_business_history'] = biz_history_df.loc[(business_id, user_id)].to_dict()
 
     return context
 
@@ -124,16 +114,12 @@ def route_message(msg_row, datasets):
         file_path = None
         if media_type == 'image':
             img_df = datasets.get('images')
-            if img_df is not None:
-                row = img_df[img_df['image_id'] == media_id]
-                if not row.empty:
-                    file_path = f"../dataset/{row.iloc[0]['file_path']}"
+            if img_df is not None and media_id in img_df.index:
+                file_path = f"../dataset/{img_df.loc[media_id]['file_path']}"
         elif media_type == 'voice':
             vn_df = datasets.get('voice_notes')
-            if vn_df is not None:
-                row = vn_df[vn_df['voice_note_id'] == media_id]
-                if not row.empty:
-                    file_path = f"../dataset/{row.iloc[0]['file_path']}"
+            if vn_df is not None and media_id in vn_df.index:
+                file_path = f"../dataset/{vn_df.loc[media_id]['file_path']}"
                     
         if file_path and os.path.exists(file_path):
             import mimetypes

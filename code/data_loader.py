@@ -18,7 +18,25 @@ def load_data(base_path='../dataset'):
         file_path = base / f
         if file_path.exists():
             key = f.replace('.csv', '')
-            data[key] = pd.read_csv(file_path)
+            df = pd.read_csv(file_path)
+            
+            # Set indices for O(1) lookups
+            if key == 'users' and 'user_id' in df.columns:
+                df.set_index('user_id', inplace=True)
+            elif key == 'groups' and 'group_id' in df.columns:
+                df.set_index('group_id', inplace=True)
+            elif key == 'business_accounts' and 'business_id' in df.columns:
+                df.set_index('business_id', inplace=True)
+            elif key == 'group_members' and 'group_id' in df.columns and 'user_id' in df.columns:
+                df.set_index(['group_id', 'user_id'], inplace=True)
+            elif key == 'user_business_history' and 'business_id' in df.columns and 'user_id' in df.columns:
+                df.set_index(['business_id', 'user_id'], inplace=True)
+            elif key == 'images' and 'image_id' in df.columns:
+                df.set_index('image_id', inplace=True)
+            elif key == 'voice_notes' and 'voice_note_id' in df.columns:
+                df.set_index('voice_note_id', inplace=True)
+                
+            data[key] = df
         else:
             print(f"Warning: {f} not found at {file_path}")
             
