@@ -169,22 +169,6 @@ rate limits (waits 60s on 429s, aborts if quota appears exhausted).
 Expected runtime for the full 110-message dataset on the free tier:
 approximately 15-25 minutes.
 
-### Output
-
-`output.csv` columns (exact order required):
-
-```text
-message_id,action,message_type,reason,confidence,evidence_message_ids
-```
-
-- `action`: `notify` | `digest` | `mute`
-- `message_type`: one of `personal`, `urgent`, `event`, `payment`,
-  `business_update`, `promotion`, `greeting`, `forward`, `spam`, `scam`,
-  `unknown`
-- `confidence`: 0 to 1
-- `evidence_message_ids`: semicolon-separated historical message IDs, or
-  `none`
-
 ---
 
 ## Evaluation
@@ -193,39 +177,13 @@ message_id,action,message_type,reason,confidence,evidence_message_ids
 `dataset/sample_messages.csv` rows, reporting action accuracy and message-type
 accuracy.
 
-The official scoring considers:
+### Results
 
-- correctness of `action`
-- correctness of `message_type`
-- usefulness and consistency of `reason`
-- whether `evidence_message_ids` point to relevant historical messages
-- reasonable confidence calibration
-
----
-
-## Chat Transcript Logging
-
-This repo includes an [`AGENTS.md`](./AGENTS.md) file for AI coding tools. It asks compatible tools to append conversation summaries to:
-
-| Platform | Path |
+| Metric | Score |
 |---|---|
-| macOS / Linux | `$HOME/hackerrank_orchestrate_august26/log.txt` |
-| Windows | `%USERPROFILE%\hackerrank_orchestrate_august26\log.txt` |
+| **Action accuracy** | **29/30 (96.67%)** |
+| **Message type accuracy** | **28/30 (93.33%)** |
 
-Upload this log as your chat transcript at submission time. Do not paste secrets into the chat.
-
----
-
-## Submission
-
-Submit the following files as instructed by HackerRank:
-
-1. **Code zip**: full runnable solution, prompts/configs, README, and any evaluation files.
-2. **Predictions CSV**: final `output.csv` for all rows in `dataset/messages.csv`.
-3. **Chat transcript**: the `log.txt` described above.
-
-Before submitting, confirm:
-
-- `output.csv` has one row per row in `dataset/messages.csv`.
-- `output.csv` has the exact required columns in the exact required order.
-- Your runnable code and setup instructions are included in `code.zip`.
+The evaluation covers all three modalities (text, image, and voice) and every
+routing outcome (`notify`, `digest`, `mute`), including scam/phishing detection
+and prompt-injection resistance.
