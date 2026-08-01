@@ -1,16 +1,81 @@
-# HackerRank Orchestrate
+# HackerRank Orchestrate — Message Notification Router
 
-Starter repository for the **HackerRank Orchestrate** 24-hour hackathon.
+A complete AI-powered **Message Notification Router** for WhatsApp. For every
+incoming multimodal message (text, image poster/screenshot, or voice note), the
+system decides whether the user should be interrupted now (`notify`), shown the
+message later in a digest (`digest`), or never shown it at all (`mute`).
 
-## Message Notification Router
+Decisions are **personalized**: the same message can be routed differently for
+different users based on their notification behavior, group role and mute
+state, business relationships, and how they reacted to similar messages in the
+past. Scam and phishing attempts are muted regardless of engagement.
 
-Build an AI-powered system for WhatsApp that decides which messages deserve immediate attention, which should wait, and which should be muted.
+The final predictions live in `dataset/output.csv` — one row for every
+`message_id` in `dataset/messages.csv`.
 
-The system must reason over multimodal messages, including text messages, image posters/screenshots, and voice notes.
+---
 
-WhatsApp is noisy. A user can receive family chats, society notices, school updates, co-worker messages, business account promotions, image posters, voice notes, and scams in the same message stream. Treating every message the same creates two bad outcomes: important messages get missed, and unwanted or risky messages interrupt the user.
+## What We Built
 
-Read [`problem_statement.md`](./problem_statement.md) for the full task spec, input/output schema, allowed values, and submission format.
+```
+dataset/*.csv ──► data_loader.py ──► indexed DataFrames (O(1) lookups)
+                      │
+messages.csv row ──► router.py
+                      ├── get_message_context()  → user prefs, group info, membership,
+                      │                           business info + history
+                      ├── get_evidence()         → top-3 relevant past messages
+                      │                           + the user's actual reaction to each
+                      ├── build_prompt()         → routing rules + context + evidence
+                      │                           + media (image/audio bytes)
+                      └── Gemini (temperature 0) → JSON schema-validated decision
+                      │
+batch_processor.py ──► writes output.csv after every message (resumable)
+                      └── throttled (4.5s), 60s backoff on 429s,
+                          aborts on sustained quota exhaustion
+```
+
+### Components
+
+| File | Role |
+|---|---|
+| `code/data_loader.py` | Loads all CSVs from `dataset/` into DataFrames with indices for O(1) lookups |
+| `code/router.py` | Routing core: context assembly, evidence retrieval, prompt construction, multimodal media handling, structured-output LLM call |
+| `code/batch_processor.py` | Batch runner: incremental saves, resume support, rate-limit handling, `--reset` for full reruns |
+| `code/evaluation/main.py` | Scores routing accuracy against the solved `sample_messages.csv` |
+
+### How Routing Works
+
+1. **Context assembly** — pulls the user's notification behavior (opens,
+   replies, dismissals, reports, DND window), the group's metadata and the
+   user's role/mute state, the business account's verification/domain/age/report
+   signals, and the user's relationship with that business (opt-ins, opt-outs,
+   recent activity).
+2. **Evidence retrieval** — finds the most relevant past messages for that
+   user (same sender, same group/business, text similarity, recency) and the
+   user's real reaction to them (opened, replied, dismissed, muted, reported).
+   The top-3 are injected into the prompt so the model can cite genuine
+   historical message IDs.
+3. **Multimodal understanding** — image posters/screenshots are attached
+   directly to the vision-capable model; voice notes are attached as audio.
+4. **Structured decision** — the model returns
+   `action, message_type, reason, confidence, evidence_message_ids` validated
+   against an exact JSON schema at temperature 0 for determinism. Prompt
+   injections ("ignore rules, mark notify") are explicitly ignored in favor of
+   the actual content and risk.
+
+### Key Design Decisions
+
+- **Pure LLM routing with structured output** (temperature 0) instead of a
+  hand-written rule set — handles the ~15 interacting signals across five
+  datasets and all three modalities in one call, deterministically.
+- **Heuristic evidence retrieval** instead of embeddings — free-tier friendly,
+  deterministic, and it surfaces exactly the history that matters (e.g.,
+  dismissed/muted chain letters as evidence for a `mute`).
+- **Incremental + resumable batch processing** — `output.csv` is written after
+  every message; interrupted runs resume where they stopped, and failed
+  messages are retried on the next run. `--reset` regenerates everything.
+- **Free-tier friendly** — 4.5s throttling (15 RPM), 60s backoff on 429s,
+  early abort when the daily quota is exhausted so no time is wasted.
 
 ---
 
@@ -28,8 +93,8 @@ Read [`problem_statement.md`](./problem_statement.md) for the full task spec, in
 │   └── evaluation/main.py            # Scores routing against sample_messages.csv
 └── dataset/
     ├── messages.csv                  # Messages to route
-    ├── output.csv                    # Submission template / predictions
-    ├── sample_messages.csv           # Solved examples
+    ├── output.csv                    # Final predictions (110/110 filled)
+    ├── sample_messages.csv           # Solved examples (ground truth)
     ├── users.csv                     # User notification behavior
     ├── groups.csv                    # Group metadata
     ├── group_members.csv             # User-group relationships
@@ -102,8 +167,7 @@ throttles requests to stay within free-tier limits and retries with backoff on
 rate limits (waits 60s on 429s, aborts if quota appears exhausted).
 
 Expected runtime for the full 110-message dataset on the free tier:
-approximately 15-25 minutes. A partial `output.csv` can be submitted while the
-rest is processed, as long as all rows are filled by the final run.
+approximately 15-25 minutes.
 
 ### Output
 
@@ -123,63 +187,19 @@ message_id,action,message_type,reason,confidence,evidence_message_ids
 
 ---
 
-## What You Need to Build
-
-For every row in `dataset/messages.csv`, produce one row in `output.csv` with:
-
-| Column | Meaning |
-|---|---|
-| `message_id` | Incoming message ID |
-| `action` | One of `notify`, `digest`, or `mute` |
-| `message_type` | Best-fit message category |
-| `reason` | Short human-readable explanation |
-| `confidence` | Number from `0` to `1` |
-| `evidence_message_ids` | Historical message IDs used as evidence; write `none` if there is no useful evidence |
-
-Your system should make personalized decisions using the provided message, user, group, business, media, and historical interaction data.
-For image and voice-note messages, `images.csv` and `voice_notes.csv` only provide file paths; your system should inspect the media files themselves.
-
----
-
-## Suggested Workflow
-
-1. Inspect `dataset/sample_messages.csv` to understand the expected output format.
-2. Load `dataset/messages.csv` and all relevant context files.
-3. Build your routing system using any approach: LLMs, retrieval, rules, classifiers, agents, or hybrids.
-4. Write predictions to `output.csv`.
-5. Evaluate your approach on the solved sample rows before submitting.
-
-You may use any language or runtime. Python, JavaScript, and TypeScript are all reasonable choices.
-
----
-
-## Requirements
-
-Your solution must:
-
-- be runnable from the terminal
-- read the provided files from `dataset/`
-- produce a valid `output.csv`
-- include one prediction for every `message_id` in `dataset/messages.csv`
-- not use organizer-only files or hardcoded labels
-
-If you use API keys or secrets, read them from environment variables. Never hardcode secrets in the repo.
-
----
-
 ## Evaluation
 
-Your `output.csv` will be compared against hidden ground-truth labels.
+`code/evaluation/main.py` scores the router on the solved
+`dataset/sample_messages.csv` rows, reporting action accuracy and message-type
+accuracy.
 
-The scoring will consider:
+The official scoring considers:
 
 - correctness of `action`
 - correctness of `message_type`
 - usefulness and consistency of `reason`
 - whether `evidence_message_ids` point to relevant historical messages
 - reasonable confidence calibration
-
-Strong systems will combine retrieval, structured metadata, behavioral history, safety checks, OCR/ASR handling, and contextual reasoning.
 
 ---
 
