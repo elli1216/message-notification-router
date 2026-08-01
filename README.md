@@ -21,9 +21,14 @@ Read [`problem_statement.md`](./problem_statement.md) for the full task spec, in
 ├── AGENTS.md                         # Rules for AI coding tools + transcript logging
 ├── problem_statement.md              # Full challenge statement
 ├── README.md                         # You are here
+├── code/
+│   ├── data_loader.py                # Loads all dataset CSVs into indexed DataFrames
+│   ├── router.py                     # LLM routing logic (text, image, voice)
+│   ├── batch_processor.py            # Batch runner -> writes dataset/output.csv
+│   └── evaluation/main.py            # Scores routing against sample_messages.csv
 └── dataset/
     ├── messages.csv                  # Messages to route
-    ├── output.csv                    # Blank submission template
+    ├── output.csv                    # Submission template / predictions
     ├── sample_messages.csv           # Solved examples
     ├── users.csv                     # User notification behavior
     ├── groups.csv                    # Group metadata
@@ -39,6 +44,82 @@ Read [`problem_statement.md`](./problem_statement.md) for the full task spec, in
         ├── images/
         └── audio/
 ```
+
+---
+
+## Setup and Run
+
+### Prerequisites
+
+- Python 3.10 or newer
+- A Google Gemini API key (free tier is sufficient: 15 requests/min)
+
+### Installation
+
+```bash
+# 1. Create and activate a virtual environment
+python -m venv .venv
+# Windows:  .venv\Scripts\activate
+# macOS/Linux: source .venv/bin/activate
+
+# 2. Install dependencies
+pip install -r requirements.txt
+
+# 3. Configure the API key
+cp .env.example .env        # Windows: copy .env.example .env
+# Then edit .env and set GEMINI_API_KEY=your-key-here
+```
+
+### Running
+
+All scripts are run from the `code/` directory (they expect `../dataset/`):
+
+```bash
+cd code
+
+# (Optional) Verify the data loader
+python data_loader.py
+
+# (Optional) Test the router on text/image/voice sample messages
+python router.py
+
+# (Optional) Evaluate routing accuracy against solved sample messages
+python evaluation/main.py
+
+# Generate predictions for all messages
+python batch_processor.py
+
+# Force a full rerun from scratch (clears existing predictions first)
+python batch_processor.py --reset
+```
+
+The batch processor writes `dataset/output.csv` with one prediction per
+`message_id` in `dataset/messages.csv`. It is **resumable**: it saves after
+every message, skips message IDs that already have predictions on restart, and
+can be interrupted and re-run at any time. Use `--reset` only when you want to
+regenerate every prediction (e.g., after changing the router logic). It
+throttles requests to stay within free-tier limits and retries with backoff on
+rate limits (waits 60s on 429s, aborts if quota appears exhausted).
+
+Expected runtime for the full 110-message dataset on the free tier:
+approximately 15-25 minutes. A partial `output.csv` can be submitted while the
+rest is processed, as long as all rows are filled by the final run.
+
+### Output
+
+`output.csv` columns (exact order required):
+
+```text
+message_id,action,message_type,reason,confidence,evidence_message_ids
+```
+
+- `action`: `notify` | `digest` | `mute`
+- `message_type`: one of `personal`, `urgent`, `event`, `payment`,
+  `business_update`, `promotion`, `greeting`, `forward`, `spam`, `scam`,
+  `unknown`
+- `confidence`: 0 to 1
+- `evidence_message_ids`: semicolon-separated historical message IDs, or
+  `none`
 
 ---
 
